@@ -1,3 +1,5 @@
 .idea/
 venv/
 test.olm
+
+config.yaml

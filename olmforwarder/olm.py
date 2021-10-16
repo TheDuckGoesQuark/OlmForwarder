@@ -237,8 +237,7 @@ class OlmEmailIterator:
             raise StopIteration
 
         parsed = self.zip_file_reader.parse_message(self._current())
-        email = make_email(parsed['headers'], parsed[
-            'body'], parsed['attachments'])
+        email = make_email(parsed['headers'], parsed['body'], parsed['attachments'])
 
         return email
 

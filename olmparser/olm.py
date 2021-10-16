@@ -1,10 +1,16 @@
 import zipfile
-from typing import Optional
+from typing import Optional, List
 
-from lxml import etree
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+from olmparser.categories import parse_categories, Category
+from olmparser.zip_tree import get_doc_tree, print_doc_tree
+
+
+def get_directories(archive_paths) -> set[str]:
+    return {path for path in archive_paths if path.endswith("/")}
 
 
 def _is_valid_info(info):
@@ -48,7 +54,7 @@ class OlmParser:
         if not self._name_list:
             return 0
         else:
-            return len(self._name_list)
+            return len([path for path in self._name_list if not path.endswith("/")])
 
     def get_info_at_index(self, index):
         if not self._name_list or index >= len(self._name_list):
@@ -159,7 +165,16 @@ class OlmParser:
 
         return names, emails
 
-    def parse_message(self, name):
+    def parse_categories(self) -> Optional[List[Category]]:
+        return parse_categories(self._zip_file)
+
+    def get_local_parser(self):
+        return LocalParser(self)
+
+    def get_account_parser(self, account: str):
+        return AccountParser(self, account)
+
+    def parse_entry(self, name):
         headers = {
             'From': None,
             'To': None,
@@ -175,23 +190,18 @@ class OlmParser:
         emails = []
         title = None
         author = None
+        doc_tree = get_doc_tree(self._zip_file, name)
 
-        doc = None
-        fh = self._zip_file.open(name)
-        try:
-            doc = etree.parse(fh)
-        except etree.XMLSyntaxError:
-            p = etree.XMLParser(huge_tree=True)
-            try:
-                doc = etree.parse(fh, p)
-            except etree.XMLSyntaxError:
-                # probably corrupt
-                pass
-
-        if doc is None:
+        if doc_tree is None:
             return
 
-        for email in doc.findall('//email'):
+        elemList = []
+        for elem in doc_tree.iter():
+            elemList.append(elem)
+
+        return elemList
+
+        for email in doc_tree.findall('//email'):
 
             headers['Message-ID'] = self._get_id(email)
             headers['Date'] = self._get_date(email)
@@ -231,15 +241,27 @@ class OlmEmailIterator:
         self.zip_file_reader = zip_file_reader
 
     def __next__(self) -> MIMEMultipart:
-        self._skip_invalid_infos()
+        parsed = None
+        while not parsed:
+            self._skip_invalid_infos()
 
-        if self._current() is None:
-            raise StopIteration
+            if self._current() is None:
+                raise StopIteration
 
-        parsed = self.zip_file_reader.parse_message(self._current())
-        email = make_email(parsed['headers'], parsed['body'], parsed['attachments'])
+            parsed = self._parse_current()
+            if parsed is None:
+                self._increment_current_index()
+
+        return parsed
+        # email = make_email(parsed['headers'], parsed['body'], parsed['attachments'])
 
         return email
+
+    def _parse_current(self):
+        return self.zip_file_reader.parse_entry(self._current())
+
+    def _increment_current_index(self):
+        self.current_index += 1
 
     def _skip_invalid_infos(self) -> None:
         valid_info_found = False
@@ -248,7 +270,7 @@ class OlmEmailIterator:
                 break
 
             if not _is_valid_info(self._current()):
-                self.current_index += 1
+                self._increment_current_index()
             else:
                 valid_info_found = True
 
@@ -257,3 +279,20 @@ class OlmEmailIterator:
 
     def __iter__(self):
         return self
+
+
+class LocalParser:
+    olm_parser: OlmParser
+
+    def __init__(self, olm_parser: OlmParser):
+        self.olm_parser = olm_parser
+
+
+class AccountParser:
+    olm_parser: OlmParser
+    account_name: str
+
+    def __init__(self, olm_parser: OlmParser, account_name: str):
+        self.olm_parser = olm_parser
+        self.account_name = account_name
+        print_doc_tree(olm_parser._zip_file, f'Accounts/{account_name}')

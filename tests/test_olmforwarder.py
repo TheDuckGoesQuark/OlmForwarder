@@ -1,4 +1,4 @@
-from olmforwarder import __version__
+from olmparser import __version__
 
 
 def test_version():
